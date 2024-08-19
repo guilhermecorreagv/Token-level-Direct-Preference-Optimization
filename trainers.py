@@ -1,26 +1,13 @@
-import torch
-
-torch.backends.cuda.matmul.allow_tf32 = True
-import torch.nn.functional as F
-import torch.nn as nn
-import transformers
-from omegaconf import DictConfig
-
-import torch.distributed as dist
-from torch.distributed.fsdp import (
-    FullyShardedDataParallel as FSDP,
-    MixedPrecision,
-    StateDictType,
-    BackwardPrefetch,
-    ShardingStrategy,
-    CPUOffload,
-)
-from torch.distributed.fsdp.api import FullStateDictConfig, FullOptimStateDictConfig
-from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
-import tensor_parallel as tp
-import contextlib
-
-from preference_datasets import get_batch_iterator
+from typing import Optional, Dict, List, Union, Tuple
+import functools
+import json
+import time
+from collections import defaultdict
+import os
+import random
+import tqdm
+import wandb
+import numpy as np
 from utils import (
     slice_and_move_batch_for_device,
     formatted_dict,
@@ -30,17 +17,27 @@ from utils import (
     rank0_print,
     get_local_dir,
 )
-import numpy as np
-import wandb
-import tqdm
+from preference_datasets import get_batch_iterator
+import contextlib
+import tensor_parallel as tp
+from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
+from torch.distributed.fsdp.api import FullStateDictConfig, FullOptimStateDictConfig
+from torch.distributed.fsdp import (
+    FullyShardedDataParallel as FSDP,
+    MixedPrecision,
+    StateDictType,
+    BackwardPrefetch,
+    ShardingStrategy,
+    CPUOffload,
+)
+import torch.distributed as dist
+from omegaconf import DictConfig
+import transformers
+import torch.nn as nn
+import torch.nn.functional as F
+import torch
 
-import random
-import os
-from collections import defaultdict
-import time
-import json
-import functools
-from typing import Optional, Dict, List, Union, Tuple
+torch.backends.cuda.matmul.allow_tf32 = True
 
 
 def tdpo_loss(chosen_logps_margin: torch.FloatTensor,
@@ -70,11 +67,30 @@ def tdpo_loss(chosen_logps_margin: torch.FloatTensor,
 
     chosen_rejected_logps_margin = chosen_logps_margin - rejected_logps_margin
 
-
     if not if_tdpo2:
-        logits = chosen_rejected_logps_margin - (rejected_position_kl - chosen_position_kl)    # tdpo1
+        logits = chosen_rejected_logps_margin - \
+            (rejected_position_kl - chosen_position_kl)    # tdpo1
     else:
-        logits = chosen_rejected_logps_margin - alpha * (rejected_position_kl - chosen_position_kl.detach())  # tdpo2
+        logits = chosen_rejected_logps_margin - alpha * \
+            (rejected_position_kl - chosen_position_kl.detach())  # tdpo2
+    losses = -F.logsigmoid(beta * logits)
+
+    chosen_rewards = beta * chosen_values.detach()
+    rejected_rewards = beta * rejected_values.detach()
+
+    return losses, chosen_rewards, rejected_rewards
+
+
+def dpo_loss(chosen_logps_margin: torch.FloatTensor,
+             rejected_logps_margin: torch.FloatTensor,
+             beta: float) -> Tuple[torch.FloatTensor, torch.FloatTensor, torch.FloatTensor]:
+
+    chosen_values = chosen_logps_margin
+    rejected_values = rejected_logps_margin
+
+    chosen_rejected_logps_margin = chosen_logps_margin - rejected_logps_margin
+
+    logits = chosen_rejected_logps_margin
     losses = -F.logsigmoid(beta * logits)
 
     chosen_rewards = beta * chosen_values.detach()
@@ -104,7 +120,8 @@ def _get_batch_logps(logits: torch.FloatTensor, labels: torch.LongTensor,
     # dummy token; we'll ignore the losses on these tokens later
     labels[labels == -100] = 0
 
-    per_token_logps = torch.gather(logits.log_softmax(-1), dim=2, index=labels.unsqueeze(2)).squeeze(2)
+    per_token_logps = torch.gather(
+        logits.log_softmax(-1), dim=2, index=labels.unsqueeze(2)).squeeze(2)
 
     if average_log_prob:
         return (per_token_logps * loss_mask).sum(-1) / loss_mask.sum(-1)
@@ -142,9 +159,12 @@ def _tdpo_get_batch_logps(logits: torch.FloatTensor, reference_logits: torch.Flo
     reference_vocab_ps = reference_logits.softmax(-1)
     reference_vocab_logps = reference_vocab_ps.log()
 
-    per_position_kl = (reference_vocab_ps * (reference_vocab_logps - vocab_logps)).sum(-1)
-    per_token_logps = torch.gather(vocab_logps, dim=2, index=labels.unsqueeze(2)).squeeze(2)
-    per_reference_token_logps = torch.gather(reference_vocab_logps, dim=2, index=labels.unsqueeze(2)).squeeze(2)
+    per_position_kl = (reference_vocab_ps *
+                       (reference_vocab_logps - vocab_logps)).sum(-1)
+    per_token_logps = torch.gather(
+        vocab_logps, dim=2, index=labels.unsqueeze(2)).squeeze(2)
+    per_reference_token_logps = torch.gather(
+        reference_vocab_logps, dim=2, index=labels.unsqueeze(2)).squeeze(2)
 
     logps_margin = per_token_logps - per_reference_token_logps
 
@@ -167,13 +187,15 @@ def concatenated_inputs(batch: Dict[str, Union[List, torch.LongTensor]]) -> Dict
     Returns:
         A dictionary containing the concatenated inputs under the key 'concatenated_input_ids'.
     """
-    max_length = max(batch['chosen_input_ids'].shape[1], batch['rejected_input_ids'].shape[1])
+    max_length = max(batch['chosen_input_ids'].shape[1],
+                     batch['rejected_input_ids'].shape[1])
     concatenated_batch = {}
     for k in batch:
         if k.startswith('chosen') and isinstance(batch[k], torch.Tensor):
             pad_value = -100 if 'labels' in k else 0
             concatenated_key = k.replace('chosen', 'concatenated')
-            concatenated_batch[concatenated_key] = pad_to_length(batch[k], max_length, pad_value=pad_value)
+            concatenated_batch[concatenated_key] = pad_to_length(
+                batch[k], max_length, pad_value=pad_value)
     for k in batch:
         if k.startswith('rejected') and isinstance(batch[k], torch.Tensor):
             pad_value = -100 if 'labels' in k else 0
@@ -226,35 +248,42 @@ class BasicTrainer(object):
                                                 batch_size=config.eval_batch_size, silent=rank != 0,
                                                 cache_dir=get_local_dir(config.local_dirs))
         self.eval_batches = list(self.eval_iterator)
-        rank0_print(f'Loaded {len(self.eval_batches)} eval batches of size {config.eval_batch_size}')
+        rank0_print(f'Loaded {len(self.eval_batches)} eval batches of size {
+                    config.eval_batch_size}')
 
     def get_batch_samples(self, batch: Dict[str, torch.LongTensor]) -> Tuple[str, str]:
         """Generate samples from the policy (and reference model, if doing TDPO training) for the given batch of inputs."""
 
         # FSDP generation according to https://github.com/pytorch/pytorch/issues/100069
-        ctx = lambda: (FSDP.summon_full_params(self.policy, writeback=False,
-                                               recurse=False) if 'FSDP' in self.config.trainer else contextlib.nullcontext())
+        def ctx(): return (FSDP.summon_full_params(self.policy, writeback=False,
+                                                   recurse=False) if 'FSDP' in self.config.trainer else contextlib.nullcontext())
         with ctx():
             policy_output = self.policy.generate(
                 batch['prompt_input_ids'], attention_mask=batch['prompt_attention_mask'],
                 max_length=self.config.max_length, do_sample=True, pad_token_id=self.tokenizer.pad_token_id)
 
         if self.config.loss.name == 'tdpo':
-            ctx = lambda: (FSDP.summon_full_params(self.reference_model, writeback=False,
-                                                   recurse=False) if 'FSDP' in self.config.trainer else contextlib.nullcontext())
+            def ctx(): return (FSDP.summon_full_params(self.reference_model, writeback=False,
+                                                       recurse=False) if 'FSDP' in self.config.trainer else contextlib.nullcontext())
             with ctx():
                 reference_output = self.reference_model.generate(
                     batch['prompt_input_ids'], attention_mask=batch['prompt_attention_mask'],
                     max_length=self.config.max_length, do_sample=True, pad_token_id=self.tokenizer.pad_token_id)
 
-        policy_output = pad_to_length(policy_output, self.config.max_length, self.tokenizer.pad_token_id)
-        policy_output = all_gather_if_needed(policy_output, self.rank, self.world_size)
-        policy_output_decoded = self.tokenizer.batch_decode(policy_output, skip_special_tokens=True)
+        policy_output = pad_to_length(
+            policy_output, self.config.max_length, self.tokenizer.pad_token_id)
+        policy_output = all_gather_if_needed(
+            policy_output, self.rank, self.world_size)
+        policy_output_decoded = self.tokenizer.batch_decode(
+            policy_output, skip_special_tokens=True)
 
         if self.config.loss.name == 'tdpo':
-            reference_output = pad_to_length(reference_output, self.config.max_length, self.tokenizer.pad_token_id)
-            reference_output = all_gather_if_needed(reference_output, self.rank, self.world_size)
-            reference_output_decoded = self.tokenizer.batch_decode(reference_output, skip_special_tokens=True)
+            reference_output = pad_to_length(
+                reference_output, self.config.max_length, self.tokenizer.pad_token_id)
+            reference_output = all_gather_if_needed(
+                reference_output, self.rank, self.world_size)
+            reference_output_decoded = self.tokenizer.batch_decode(
+                reference_output, skip_special_tokens=True)
         else:
             reference_output_decoded = []
 
@@ -273,15 +302,19 @@ class BasicTrainer(object):
             reference_all_logits = reference_model(concatenated_batch['concatenated_input_ids'],
                                                    attention_mask=concatenated_batch[
                                                        'concatenated_attention_mask']).logits.to(torch.float32)
-        all_logps_margin, all_position_kl, all_logps = _tdpo_get_batch_logps(all_logits, reference_all_logits, concatenated_batch['concatenated_labels'], average_log_prob=False)
+        all_logps_margin, all_position_kl, all_logps = _tdpo_get_batch_logps(
+            all_logits, reference_all_logits, concatenated_batch['concatenated_labels'], average_log_prob=False)
 
-        chosen_logps_margin = all_logps_margin[:batch['chosen_input_ids'].shape[0]]
+        chosen_logps_margin = all_logps_margin[:
+                                               batch['chosen_input_ids'].shape[0]]
         rejected_logps_margin = all_logps_margin[batch['chosen_input_ids'].shape[0]:]
-        chosen_position_kl = all_position_kl[:batch['chosen_input_ids'].shape[0]]
+        chosen_position_kl = all_position_kl[:
+                                             batch['chosen_input_ids'].shape[0]]
         rejected_position_kl = all_position_kl[batch['chosen_input_ids'].shape[0]:]
 
         chosen_logps = all_logps[:batch['chosen_input_ids'].shape[0]].detach()
-        rejected_logps = all_logps[batch['chosen_input_ids'].shape[0]:].detach()
+        rejected_logps = all_logps[batch['chosen_input_ids'].shape[0]:].detach(
+        )
 
         return chosen_logps_margin, rejected_logps_margin, chosen_position_kl, rejected_position_kl, \
             chosen_logps, rejected_logps
@@ -301,36 +334,96 @@ class BasicTrainer(object):
 
             reward_accuracies = (chosen_rewards > rejected_rewards).float()
 
-            chosen_rewards = all_gather_if_needed(chosen_rewards, self.rank, self.world_size)
-            rejected_rewards = all_gather_if_needed(rejected_rewards, self.rank, self.world_size)
-            reward_accuracies = all_gather_if_needed(reward_accuracies, self.rank, self.world_size)
+            chosen_rewards = all_gather_if_needed(
+                chosen_rewards, self.rank, self.world_size)
+            rejected_rewards = all_gather_if_needed(
+                rejected_rewards, self.rank, self.world_size)
+            reward_accuracies = all_gather_if_needed(
+                reward_accuracies, self.rank, self.world_size)
 
-            metrics[f'rewards_{train_test}/chosen'] = chosen_rewards.cpu().numpy().tolist()
-            metrics[f'rewards_{train_test}/rejected'] = rejected_rewards.cpu().numpy().tolist()
-            metrics[f'rewards_{train_test}/accuracies'] = reward_accuracies.cpu().numpy().tolist()
-            metrics[f'rewards_{train_test}/margins'] = (chosen_rewards - rejected_rewards).cpu().numpy().tolist()
+            metrics[f'rewards_{
+                train_test}/chosen'] = chosen_rewards.cpu().numpy().tolist()
+            metrics[f'rewards_{
+                train_test}/rejected'] = rejected_rewards.cpu().numpy().tolist()
+            metrics[f'rewards_{
+                train_test}/accuracies'] = reward_accuracies.cpu().numpy().tolist()
+            metrics[f'rewards_{
+                train_test}/margins'] = (chosen_rewards - rejected_rewards).cpu().numpy().tolist()
 
-            all_device_chosen_position_kl = all_gather_if_needed(chosen_position_kl.detach(), self.rank, self.world_size)
-            all_device_rejected_position_kl = all_gather_if_needed(rejected_position_kl.detach(), self.rank, self.world_size)
+            all_device_chosen_position_kl = all_gather_if_needed(
+                chosen_position_kl.detach(), self.rank, self.world_size)
+            all_device_rejected_position_kl = all_gather_if_needed(
+                rejected_position_kl.detach(), self.rank, self.world_size)
 
-            metrics[f'kl_{train_test}/chosen'] = all_device_chosen_position_kl.cpu().numpy().tolist()
-            metrics[f'kl_{train_test}/rejected'] = all_device_rejected_position_kl.cpu().numpy().tolist()
-            metrics[f'kl_{train_test}/margin'] = (all_device_chosen_position_kl - all_device_rejected_position_kl).cpu().numpy().tolist()
+            metrics[f'kl_{
+                train_test}/chosen'] = all_device_chosen_position_kl.cpu().numpy().tolist()
+            metrics[f'kl_{
+                train_test}/rejected'] = all_device_rejected_position_kl.cpu().numpy().tolist()
+            metrics[f'kl_{train_test}/margin'] = (
+                all_device_chosen_position_kl - all_device_rejected_position_kl).cpu().numpy().tolist()
 
-            policy_rejected_logps = all_gather_if_needed(policy_rejected_logps.detach(), self.rank, self.world_size)
-            metrics[f'logps_{train_test}/rejected'] = policy_rejected_logps.cpu().numpy().tolist()
+            policy_rejected_logps = all_gather_if_needed(
+                policy_rejected_logps.detach(), self.rank, self.world_size)
+            metrics[f'logps_{
+                train_test}/rejected'] = policy_rejected_logps.cpu().numpy().tolist()
+
+        elif loss_config.name == 'dpo':
+            chosen_logps_margin, rejected_logps_margin, chosen_position_kl, rejected_position_kl, policy_chosen_logps, policy_rejected_logps\
+                = self.tdpo_concatenated_forward(self.policy, self.reference_model, batch)
+            losses, chosen_rewards, rejected_rewards = dpo_loss(chosen_logps_margin, rejected_logps_margin,
+                                                                chosen_position_kl, rejected_position_kl,
+                                                                beta=loss_config.beta, alpha=loss_config.alpha, if_tdpo2=loss_config.if_tdpo2)
+
+            reward_accuracies = (chosen_rewards > rejected_rewards).float()
+
+            chosen_rewards = all_gather_if_needed(
+                chosen_rewards, self.rank, self.world_size)
+            rejected_rewards = all_gather_if_needed(
+                rejected_rewards, self.rank, self.world_size)
+            reward_accuracies = all_gather_if_needed(
+                reward_accuracies, self.rank, self.world_size)
+
+            metrics[f'rewards_{
+                train_test}/chosen'] = chosen_rewards.cpu().numpy().tolist()
+            metrics[f'rewards_{
+                train_test}/rejected'] = rejected_rewards.cpu().numpy().tolist()
+            metrics[f'rewards_{
+                train_test}/accuracies'] = reward_accuracies.cpu().numpy().tolist()
+            metrics[f'rewards_{
+                train_test}/margins'] = (chosen_rewards - rejected_rewards).cpu().numpy().tolist()
+
+            all_device_chosen_position_kl = all_gather_if_needed(
+                chosen_position_kl.detach(), self.rank, self.world_size)
+            all_device_rejected_position_kl = all_gather_if_needed(
+                rejected_position_kl.detach(), self.rank, self.world_size)
+
+            metrics[f'kl_{
+                train_test}/chosen'] = all_device_chosen_position_kl.cpu().numpy().tolist()
+            metrics[f'kl_{
+                train_test}/rejected'] = all_device_rejected_position_kl.cpu().numpy().tolist()
+            metrics[f'kl_{train_test}/margin'] = (
+                all_device_chosen_position_kl - all_device_rejected_position_kl).cpu().numpy().tolist()
+
+            policy_rejected_logps = all_gather_if_needed(
+                policy_rejected_logps.detach(), self.rank, self.world_size)
+            metrics[f'logps_{
+                train_test}/rejected'] = policy_rejected_logps.cpu().numpy().tolist()
 
         elif loss_config.name == 'sft':
             policy_chosen_logits = self.policy(batch['chosen_input_ids'],
                                                attention_mask=batch['chosen_attention_mask']).logits.to(torch.float32)
-            policy_chosen_logps = _get_batch_logps(policy_chosen_logits, batch['chosen_labels'], average_log_prob=False)
+            policy_chosen_logps = _get_batch_logps(
+                policy_chosen_logits, batch['chosen_labels'], average_log_prob=False)
 
             losses = -policy_chosen_logps
 
-        policy_chosen_logps = all_gather_if_needed(policy_chosen_logps.detach(), self.rank, self.world_size)
-        metrics[f'logps_{train_test}/chosen'] = policy_chosen_logps.cpu().numpy().tolist()
+        policy_chosen_logps = all_gather_if_needed(
+            policy_chosen_logps.detach(), self.rank, self.world_size)
+        metrics[f'logps_{
+            train_test}/chosen'] = policy_chosen_logps.cpu().numpy().tolist()
 
-        all_devices_losses = all_gather_if_needed(losses.detach(), self.rank, self.world_size)
+        all_devices_losses = all_gather_if_needed(
+            losses.detach(), self.rank, self.world_size)
         metrics[f'loss/{train_test}'] = all_devices_losses.cpu().numpy().tolist()
 
         return losses.mean(), metrics
@@ -339,10 +432,11 @@ class BasicTrainer(object):
         """Begin either SFT or TDPO training, with periodic evaluation."""
 
         rank0_print(f'Using {self.config.optimizer} optimizer')
-        self.optimizer = getattr(torch.optim, self.config.optimizer)(self.policy.parameters(), lr=self.config.lr)
+        self.optimizer = getattr(torch.optim, self.config.optimizer)(
+            self.policy.parameters(), lr=self.config.lr)
         self.scheduler = torch.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=lambda step: min(1.0,
                                                                                                       (step + 1) / (
-                                                                                                              self.config.warmup_steps + 1)))
+                                                                                                          self.config.warmup_steps + 1)))
 
         torch.manual_seed(self.seed)
         np.random.seed(self.seed)
@@ -359,22 +453,26 @@ class BasicTrainer(object):
             #### BEGIN EVALUATION ####
             if self.example_counter % self.config.eval_every == 0 and (
                     self.example_counter > 0 or self.config.do_first_eval):
-                rank0_print(f'Running evaluation after {self.example_counter} train examples')
+                rank0_print(f'Running evaluation after {
+                            self.example_counter} train examples')
                 self.policy.eval()
 
                 all_eval_metrics = defaultdict(list)
                 if self.config.sample_during_eval:
                     all_policy_samples, all_reference_samples = [], []
-                    policy_text_table = wandb.Table(columns=["step", "prompt", "sample"])
+                    policy_text_table = wandb.Table(
+                        columns=["step", "prompt", "sample"])
                     if self.config.loss.name in 'tdpo':
-                        reference_text_table = wandb.Table(columns=["step", "prompt", "sample"])
+                        reference_text_table = wandb.Table(
+                            columns=["step", "prompt", "sample"])
 
                 for eval_batch in (
-                tqdm.tqdm(self.eval_batches, desc='Computing eval metrics') if self.rank == 0 else self.eval_batches):
+                        tqdm.tqdm(self.eval_batches, desc='Computing eval metrics') if self.rank == 0 else self.eval_batches):
                     local_eval_batch = slice_and_move_batch_for_device(eval_batch, self.rank, self.world_size,
                                                                        self.rank)
                     with torch.no_grad():
-                        _, eval_metrics = self.get_batch_metrics(local_eval_batch, self.config.loss, train=False)
+                        _, eval_metrics = self.get_batch_metrics(
+                            local_eval_batch, self.config.loss, train=False)
 
                     for k, v in eval_metrics.items():
                         all_eval_metrics[k].extend(v)
@@ -388,41 +486,51 @@ class BasicTrainer(object):
                         n_sample_batches = self.config.n_eval_model_samples // self.config.eval_batch_size
                         sample_batches = self.eval_batches[:n_sample_batches]
                     for eval_batch in (
-                    tqdm.tqdm(sample_batches, desc='Generating samples...') if self.rank == 0 else sample_batches):
+                            tqdm.tqdm(sample_batches, desc='Generating samples...') if self.rank == 0 else sample_batches):
                         local_eval_batch = slice_and_move_batch_for_device(eval_batch, self.rank, self.world_size,
                                                                            self.rank)
-                        policy_samples, reference_samples = self.get_batch_samples(local_eval_batch)
+                        policy_samples, reference_samples = self.get_batch_samples(
+                            local_eval_batch)
 
                         all_policy_samples.extend(policy_samples)
                         all_reference_samples.extend(reference_samples)
 
                         for prompt, sample in zip(eval_batch['prompt'], policy_samples):
-                            policy_text_table.add_data(self.example_counter, prompt, sample)
+                            policy_text_table.add_data(
+                                self.example_counter, prompt, sample)
                         if self.config.loss.name == 'tdpo':
                             for prompt, sample in zip(eval_batch['prompt'], reference_samples):
-                                reference_text_table.add_data(self.example_counter, prompt, sample)
+                                reference_text_table.add_data(
+                                    self.example_counter, prompt, sample)
 
-                mean_eval_metrics = {k: sum(v) / len(v) for k, v in all_eval_metrics.items()}
-                rank0_print(f'eval after {self.example_counter}: {formatted_dict(mean_eval_metrics)}')
+                mean_eval_metrics = {k: sum(v) / len(v)
+                                     for k, v in all_eval_metrics.items()}
+                rank0_print(f'eval after {self.example_counter}: {
+                            formatted_dict(mean_eval_metrics)}')
                 if self.config.sample_during_eval:
                     rank0_print(json.dumps(all_policy_samples[:10], indent=2))
                     if self.config.loss.name == 'tdpo':
-                        rank0_print(json.dumps(all_reference_samples[:10], indent=2))
+                        rank0_print(json.dumps(
+                            all_reference_samples[:10], indent=2))
 
                 if self.config.wandb.enabled and self.rank == 0:
                     wandb.log(mean_eval_metrics, step=self.example_counter)
 
                     if self.config.sample_during_eval:
-                        wandb.log({"policy_samples": policy_text_table}, step=self.example_counter)
+                        wandb.log({"policy_samples": policy_text_table},
+                                  step=self.example_counter)
                         if self.config.loss.name == 'tdpo':
-                            wandb.log({"reference_samples": reference_text_table}, step=self.example_counter)
+                            wandb.log(
+                                {"reference_samples": reference_text_table}, step=self.example_counter)
 
                 if self.example_counter > 0:
                     if self.config.debug:
                         rank0_print('skipping save in debug mode')
                     else:
-                        output_dir = os.path.join(self.run_dir, f'step-{self.example_counter}')
-                        rank0_print(f'creating checkpoint to write to {output_dir}...')
+                        output_dir = os.path.join(
+                            self.run_dir, f'step-{self.example_counter}')
+                        rank0_print(f'creating checkpoint to write to {
+                                    output_dir}...')
                         self.save(output_dir, mean_eval_metrics)
             #### END EVALUATION ####
 
@@ -436,7 +544,8 @@ class BasicTrainer(object):
                                                                     self.config.gradient_accumulation_steps, self.rank)
                 local_microbatch = slice_and_move_batch_for_device(global_microbatch, self.rank, self.world_size,
                                                                    self.rank)
-                loss, metrics = self.get_batch_metrics(local_microbatch, self.config.loss, train=True)
+                loss, metrics = self.get_batch_metrics(
+                    local_microbatch, self.config.loss, train=True)
                 (loss / self.config.gradient_accumulation_steps).backward()
 
                 for k, v in metrics.items():
@@ -456,17 +565,20 @@ class BasicTrainer(object):
             self.example_counter += self.config.batch_size
 
             if last_log is None or time.time() - last_log > self.config.minimum_log_interval_secs:
-                mean_train_metrics = {k: sum(v) / len(v) for k, v in batch_metrics.items()}
+                mean_train_metrics = {k: sum(v) / len(v)
+                                      for k, v in batch_metrics.items()}
                 mean_train_metrics['counters/examples'] = self.example_counter
                 mean_train_metrics['counters/updates'] = self.batch_counter
-                rank0_print(f'train stats after {self.example_counter} examples: {formatted_dict(mean_train_metrics)}')
+                rank0_print(f'train stats after {self.example_counter} examples: {
+                            formatted_dict(mean_train_metrics)}')
 
                 if self.config.wandb.enabled and self.rank == 0:
                     wandb.log(mean_train_metrics, step=self.example_counter)
 
                 last_log = time.time()
             else:
-                rank0_print(f'skipping logging after {self.example_counter} examples to avoid logging too frequently')
+                rank0_print(f'skipping logging after {
+                            self.example_counter} examples to avoid logging too frequently')
             #### END TRAINING ####
 
     def clip_gradient(self):
@@ -492,15 +604,18 @@ class BasicTrainer(object):
         """Save policy, optimizer, and scheduler state to disk."""
 
         policy_state_dict = self.policy.state_dict()
-        self.write_state_dict(self.example_counter, policy_state_dict, metrics, 'policy.pt', output_dir)
+        self.write_state_dict(
+            self.example_counter, policy_state_dict, metrics, 'policy.pt', output_dir)
         del policy_state_dict
 
         optimizer_state_dict = self.optimizer.state_dict()
-        self.write_state_dict(self.example_counter, optimizer_state_dict, metrics, 'optimizer.pt', output_dir)
+        self.write_state_dict(
+            self.example_counter, optimizer_state_dict, metrics, 'optimizer.pt', output_dir)
         del optimizer_state_dict
 
         scheduler_state_dict = self.scheduler.state_dict()
-        self.write_state_dict(self.example_counter, scheduler_state_dict, metrics, 'scheduler.pt', output_dir)
+        self.write_state_dict(
+            self.example_counter, scheduler_state_dict, metrics, 'scheduler.pt', output_dir)
 
 
 class FSDPTrainer(BasicTrainer):
@@ -515,8 +630,10 @@ class FSDPTrainer(BasicTrainer):
         super().__init__(policy, config, seed, run_dir, reference_model, rank, world_size)
         assert config.model.block_name is not None, 'must specify model.block_name (e.g., GPT2Block or GPTNeoXLayer) for FSDP'
 
-        wrap_class = get_block_class_from_model(policy, config.model.block_name)
-        model_auto_wrap_policy = functools.partial(transformer_auto_wrap_policy, transformer_layer_cls={wrap_class}, )
+        wrap_class = get_block_class_from_model(
+            policy, config.model.block_name)
+        model_auto_wrap_policy = functools.partial(
+            transformer_auto_wrap_policy, transformer_layer_cls={wrap_class}, )
 
         shared_fsdp_kwargs = dict(
             auto_wrap_policy=model_auto_wrap_policy,
@@ -531,9 +648,12 @@ class FSDPTrainer(BasicTrainer):
         )
 
         rank0_print('Sharding policy...')
-        mp_dtype = getattr(torch, config.model.fsdp_policy_mp) if config.model.fsdp_policy_mp is not None else None
-        policy_mp_policy = MixedPrecision(param_dtype=mp_dtype, reduce_dtype=mp_dtype, buffer_dtype=mp_dtype)
-        self.policy = FSDP(policy, **shared_fsdp_kwargs, mixed_precision=policy_mp_policy)
+        mp_dtype = getattr(
+            torch, config.model.fsdp_policy_mp) if config.model.fsdp_policy_mp is not None else None
+        policy_mp_policy = MixedPrecision(
+            param_dtype=mp_dtype, reduce_dtype=mp_dtype, buffer_dtype=mp_dtype)
+        self.policy = FSDP(policy, **shared_fsdp_kwargs,
+                           mixed_precision=policy_mp_policy)
 
         if config.activation_checkpointing:
             rank0_print('Attempting to enable activation checkpointing...')
@@ -555,8 +675,10 @@ class FSDPTrainer(BasicTrainer):
             except Exception as e:
                 rank0_print('FSDP activation checkpointing not available:', e)
             else:
-                check_fn = lambda submodule: isinstance(submodule, wrap_class)
-                rank0_print('Applying activation checkpointing wrapper to policy...')
+                def check_fn(submodule): return isinstance(
+                    submodule, wrap_class)
+                rank0_print(
+                    'Applying activation checkpointing wrapper to policy...')
                 apply_activation_checkpointing(self.policy, checkpoint_wrapper_fn=non_reentrant_wrapper,
                                                check_fn=check_fn)
                 rank0_print('FSDP activation checkpointing enabled!')
@@ -579,22 +701,27 @@ class FSDPTrainer(BasicTrainer):
             policy_state_dict = self.policy.state_dict()
 
         if self.rank == 0:
-            self.write_state_dict(self.example_counter, policy_state_dict, metrics, 'policy.pt', output_dir)
+            self.write_state_dict(
+                self.example_counter, policy_state_dict, metrics, 'policy.pt', output_dir)
         del policy_state_dict
         dist.barrier()
 
-        save_policy = FullOptimStateDictConfig(offload_to_cpu=True, rank0_only=True)
+        save_policy = FullOptimStateDictConfig(
+            offload_to_cpu=True, rank0_only=True)
         with FSDP.state_dict_type(self.policy, StateDictType.FULL_STATE_DICT, optim_state_dict_config=save_policy):
-            optimizer_state_dict = FSDP.optim_state_dict(self.policy, self.optimizer)
+            optimizer_state_dict = FSDP.optim_state_dict(
+                self.policy, self.optimizer)
 
         if self.rank == 0:
-            self.write_state_dict(self.example_counter, optimizer_state_dict, metrics, 'optimizer.pt', output_dir)
+            self.write_state_dict(
+                self.example_counter, optimizer_state_dict, metrics, 'optimizer.pt', output_dir)
         del optimizer_state_dict
         dist.barrier()
 
         if self.rank == 0:
             scheduler_state_dict = self.scheduler.state_dict()
-            self.write_state_dict(self.example_counter, scheduler_state_dict, metrics, 'scheduler.pt', output_dir)
+            self.write_state_dict(
+                self.example_counter, scheduler_state_dict, metrics, 'scheduler.pt', output_dir)
         dist.barrier()
 
 
@@ -611,12 +738,14 @@ class TensorParallelTrainer(BasicTrainer):
         self.policy = tp.tensor_parallel(policy, sharded=True)
         if config.loss.name == 'tdpo':
             rank0_print('Sharding reference model...')
-            self.reference_model = tp.tensor_parallel(reference_model, sharded=False)
+            self.reference_model = tp.tensor_parallel(
+                reference_model, sharded=False)
 
     def save(self, output_dir=None, metrics=None):
         """Save (unsharded) policy state to disk."""
         with tp.save_tensor_parallel(self.policy):
             policy_state_dict = self.policy.state_dict()
 
-        self.write_state_dict(self.example_counter, policy_state_dict, metrics, 'policy.pt', output_dir)
+        self.write_state_dict(
+            self.example_counter, policy_state_dict, metrics, 'policy.pt', output_dir)
         del policy_state_dict
