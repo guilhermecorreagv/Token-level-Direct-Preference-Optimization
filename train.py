@@ -100,8 +100,7 @@ def main(config: DictConfig):
     if config.model.archive is not None:
         state_dict = torch.load(config.model.archive, map_location='cpu')
         step, metrics = state_dict['step_idx'], state_dict['metrics']
-        print(f'loading pre-trained weights at step {step} from {
-              config.model.archive} with metrics {json.dumps(metrics, indent=2)}')
+        print(f'loading pre-trained weights at step {step} from {config.model.archive} with metrics {json.dumps(metrics, indent=2)}')
         policy.load_state_dict(state_dict['state'])
         if config.loss.name == 'tdpo':
             reference_model.load_state_dict(state_dict['state'])

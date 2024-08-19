@@ -248,8 +248,7 @@ class BasicTrainer(object):
                                                 batch_size=config.eval_batch_size, silent=rank != 0,
                                                 cache_dir=get_local_dir(config.local_dirs))
         self.eval_batches = list(self.eval_iterator)
-        rank0_print(f'Loaded {len(self.eval_batches)} eval batches of size {
-                    config.eval_batch_size}')
+        rank0_print(f'Loaded {len(self.eval_batches)} eval batches of size {config.eval_batch_size}')
 
     def get_batch_samples(self, batch: Dict[str, torch.LongTensor]) -> Tuple[str, str]:
         """Generate samples from the policy (and reference model, if doing TDPO training) for the given batch of inputs."""
@@ -341,31 +340,24 @@ class BasicTrainer(object):
             reward_accuracies = all_gather_if_needed(
                 reward_accuracies, self.rank, self.world_size)
 
-            metrics[f'rewards_{
-                train_test}/chosen'] = chosen_rewards.cpu().numpy().tolist()
-            metrics[f'rewards_{
-                train_test}/rejected'] = rejected_rewards.cpu().numpy().tolist()
-            metrics[f'rewards_{
-                train_test}/accuracies'] = reward_accuracies.cpu().numpy().tolist()
-            metrics[f'rewards_{
-                train_test}/margins'] = (chosen_rewards - rejected_rewards).cpu().numpy().tolist()
+            metrics[f'rewards_{train_test}/chosen'] = chosen_rewards.cpu().numpy().tolist()
+            metrics[f'rewards_{train_test}/rejected'] = rejected_rewards.cpu().numpy().tolist()
+            metrics[f'rewards_{train_test}/accuracies'] = reward_accuracies.cpu().numpy().tolist()
+            metrics[f'rewards_{train_test}/margins'] = (chosen_rewards - rejected_rewards).cpu().numpy().tolist()
 
             all_device_chosen_position_kl = all_gather_if_needed(
                 chosen_position_kl.detach(), self.rank, self.world_size)
             all_device_rejected_position_kl = all_gather_if_needed(
                 rejected_position_kl.detach(), self.rank, self.world_size)
 
-            metrics[f'kl_{
-                train_test}/chosen'] = all_device_chosen_position_kl.cpu().numpy().tolist()
-            metrics[f'kl_{
-                train_test}/rejected'] = all_device_rejected_position_kl.cpu().numpy().tolist()
+            metrics[f'kl_{train_test}/chosen'] = all_device_chosen_position_kl.cpu().numpy().tolist()
+            metrics[f'kl_{train_test}/rejected'] = all_device_rejected_position_kl.cpu().numpy().tolist()
             metrics[f'kl_{train_test}/margin'] = (
                 all_device_chosen_position_kl - all_device_rejected_position_kl).cpu().numpy().tolist()
 
             policy_rejected_logps = all_gather_if_needed(
                 policy_rejected_logps.detach(), self.rank, self.world_size)
-            metrics[f'logps_{
-                train_test}/rejected'] = policy_rejected_logps.cpu().numpy().tolist()
+            metrics[f'logps_{train_test}/rejected'] = policy_rejected_logps.cpu().numpy().tolist()
 
         elif loss_config.name == 'dpo':
             chosen_logps_margin, rejected_logps_margin, chosen_position_kl, rejected_position_kl, policy_chosen_logps, policy_rejected_logps\
@@ -383,31 +375,24 @@ class BasicTrainer(object):
             reward_accuracies = all_gather_if_needed(
                 reward_accuracies, self.rank, self.world_size)
 
-            metrics[f'rewards_{
-                train_test}/chosen'] = chosen_rewards.cpu().numpy().tolist()
-            metrics[f'rewards_{
-                train_test}/rejected'] = rejected_rewards.cpu().numpy().tolist()
-            metrics[f'rewards_{
-                train_test}/accuracies'] = reward_accuracies.cpu().numpy().tolist()
-            metrics[f'rewards_{
-                train_test}/margins'] = (chosen_rewards - rejected_rewards).cpu().numpy().tolist()
+            metrics[f'rewards_{train_test}/chosen'] = chosen_rewards.cpu().numpy().tolist()
+            metrics[f'rewards_{train_test}/rejected'] = rejected_rewards.cpu().numpy().tolist()
+            metrics[f'rewards_{train_test}/accuracies'] = reward_accuracies.cpu().numpy().tolist()
+            metrics[f'rewards_{train_test}/margins'] = (chosen_rewards - rejected_rewards).cpu().numpy().tolist()
 
             all_device_chosen_position_kl = all_gather_if_needed(
                 chosen_position_kl.detach(), self.rank, self.world_size)
             all_device_rejected_position_kl = all_gather_if_needed(
                 rejected_position_kl.detach(), self.rank, self.world_size)
 
-            metrics[f'kl_{
-                train_test}/chosen'] = all_device_chosen_position_kl.cpu().numpy().tolist()
-            metrics[f'kl_{
-                train_test}/rejected'] = all_device_rejected_position_kl.cpu().numpy().tolist()
+            metrics[f'kl_{train_test}/chosen'] = all_device_chosen_position_kl.cpu().numpy().tolist()
+            metrics[f'kl_{train_test}/rejected'] = all_device_rejected_position_kl.cpu().numpy().tolist()
             metrics[f'kl_{train_test}/margin'] = (
                 all_device_chosen_position_kl - all_device_rejected_position_kl).cpu().numpy().tolist()
 
             policy_rejected_logps = all_gather_if_needed(
                 policy_rejected_logps.detach(), self.rank, self.world_size)
-            metrics[f'logps_{
-                train_test}/rejected'] = policy_rejected_logps.cpu().numpy().tolist()
+            metrics[f'logps_{train_test}/rejected'] = policy_rejected_logps.cpu().numpy().tolist()
 
         elif loss_config.name == 'sft':
             policy_chosen_logits = self.policy(batch['chosen_input_ids'],
@@ -419,8 +404,7 @@ class BasicTrainer(object):
 
         policy_chosen_logps = all_gather_if_needed(
             policy_chosen_logps.detach(), self.rank, self.world_size)
-        metrics[f'logps_{
-            train_test}/chosen'] = policy_chosen_logps.cpu().numpy().tolist()
+        metrics[f'logps_{train_test}/chosen'] = policy_chosen_logps.cpu().numpy().tolist()
 
         all_devices_losses = all_gather_if_needed(
             losses.detach(), self.rank, self.world_size)
@@ -453,8 +437,7 @@ class BasicTrainer(object):
             #### BEGIN EVALUATION ####
             if self.example_counter % self.config.eval_every == 0 and (
                     self.example_counter > 0 or self.config.do_first_eval):
-                rank0_print(f'Running evaluation after {
-                            self.example_counter} train examples')
+                rank0_print(f'Running evaluation after {self.example_counter} train examples')
                 self.policy.eval()
 
                 all_eval_metrics = defaultdict(list)
@@ -505,8 +488,7 @@ class BasicTrainer(object):
 
                 mean_eval_metrics = {k: sum(v) / len(v)
                                      for k, v in all_eval_metrics.items()}
-                rank0_print(f'eval after {self.example_counter}: {
-                            formatted_dict(mean_eval_metrics)}')
+                rank0_print(f'eval after {self.example_counter}: {formatted_dict(mean_eval_metrics)}')
                 if self.config.sample_during_eval:
                     rank0_print(json.dumps(all_policy_samples[:10], indent=2))
                     if self.config.loss.name == 'tdpo':
@@ -529,8 +511,7 @@ class BasicTrainer(object):
                     else:
                         output_dir = os.path.join(
                             self.run_dir, f'step-{self.example_counter}')
-                        rank0_print(f'creating checkpoint to write to {
-                                    output_dir}...')
+                        rank0_print(f'creating checkpoint to write to {output_dir}...')
                         self.save(output_dir, mean_eval_metrics)
             #### END EVALUATION ####
 
@@ -569,16 +550,14 @@ class BasicTrainer(object):
                                       for k, v in batch_metrics.items()}
                 mean_train_metrics['counters/examples'] = self.example_counter
                 mean_train_metrics['counters/updates'] = self.batch_counter
-                rank0_print(f'train stats after {self.example_counter} examples: {
-                            formatted_dict(mean_train_metrics)}')
+                rank0_print(f'train stats after {self.example_counter} examples: {formatted_dict(mean_train_metrics)}')
 
                 if self.config.wandb.enabled and self.rank == 0:
                     wandb.log(mean_train_metrics, step=self.example_counter)
 
                 last_log = time.time()
             else:
-                rank0_print(f'skipping logging after {
-                            self.example_counter} examples to avoid logging too frequently')
+                rank0_print(f'skipping logging after {self.example_counter} examples to avoid logging too frequently')
             #### END TRAINING ####
 
     def clip_gradient(self):

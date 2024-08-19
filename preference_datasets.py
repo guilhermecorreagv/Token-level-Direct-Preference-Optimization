@@ -150,7 +150,7 @@ def get_hh(split: str, silent: bool = False, cache_dir: str = None) -> Dict[
          'prompt2': {
              ...
          },
-     }
+     } 
 
      Prompts should be structured as follows:
        \n\nHuman: <prompt>\n\nAssistant:
@@ -253,12 +253,9 @@ def tokenize_batch_element(prompt: str, chosen: str, rejected: str, truncation_m
     rejected_tokens = tokenizer(rejected, add_special_tokens=False)
     prompt_tokens = tokenizer(prompt, add_special_tokens=False)
 
-    assert tokenizer.eos_token_id not in prompt_tokens['input_ids'], f"Prompt contains EOS token: {
-        prompt}"
-    assert tokenizer.eos_token_id not in chosen_tokens['input_ids'], f"Chosen response contains EOS token: {
-        chosen}"
-    assert tokenizer.eos_token_id not in rejected_tokens['input_ids'], f"Rejected response contains EOS token: {
-        rejected}"
+    assert tokenizer.eos_token_id not in prompt_tokens['input_ids'], f"Prompt contains EOS token: {prompt}"
+    assert tokenizer.eos_token_id not in chosen_tokens['input_ids'], f"Chosen response contains EOS token: {chosen}"
+    assert tokenizer.eos_token_id not in rejected_tokens['input_ids'], f"Rejected response contains EOS token: {rejected}"
 
     chosen_tokens['input_ids'].append(tokenizer.eos_token_id)
     chosen_tokens['attention_mask'].append(1)
@@ -342,7 +339,7 @@ def get_batch_iterator(names: List[str],
       max_prompt_length: Maximum length of the prompt.
       sft_mode: Whether to use SFT mode (i.e., return sft_target instead of chosen/rejected). In sft mode, we just return chosen_input_ids, but they contain the sft_target.
       n_epochs: Number of epochs to run for. This or n_examples must be specified.
-      n_examples: Number of examples to run for. This or n_epochs must be specified.
+      n_examples: Number of examples to run for. This or n_epochs must be specified. 
       seed: Random seed.
       silent: Whether to silence the progress bar(s).
       cache_dir: Directory to cache the datasets in.
@@ -369,8 +366,7 @@ def get_batch_iterator(names: List[str],
     while True:
         if n_epochs is not None and epoch_idx >= n_epochs:
             if not silent:
-                print(f'Finished generating {
-                      n_epochs} epochs on {split} split')
+                print(f'Finished generating {n_epochs} epochs on {split} split')
             break
         if shuffle:
             with TemporarilySeededRandom(next(permutation_seeds)):
@@ -391,8 +387,7 @@ def get_batch_iterator(names: List[str],
                     yield collate_fn(batch)
                     if n_examples is not None and example_idx >= n_examples:
                         if not silent:
-                            print(f'Finished generating {
-                                  n_examples} examples on {split} split')
+                            print(f'Finished generating {n_examples} examples on {split} split')
                         done = True
 
                     batch = []
@@ -408,8 +403,7 @@ def get_batch_iterator(names: List[str],
                         yield collate_fn(batch)
                         if n_examples is not None and example_idx >= n_examples:
                             if not silent:
-                                print(f'FINISHED {n_examples} EXAMPLES on {
-                                      split} split')
+                                print(f'FINISHED {n_examples} EXAMPLES on {split} split')
                             done = True
                         batch = []
         if done:
