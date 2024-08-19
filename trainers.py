@@ -363,8 +363,7 @@ class BasicTrainer(object):
             chosen_logps_margin, rejected_logps_margin, chosen_position_kl, rejected_position_kl, policy_chosen_logps, policy_rejected_logps\
                 = self.tdpo_concatenated_forward(self.policy, self.reference_model, batch)
             losses, chosen_rewards, rejected_rewards = dpo_loss(chosen_logps_margin, rejected_logps_margin,
-                                                                chosen_position_kl, rejected_position_kl,
-                                                                beta=loss_config.beta, alpha=loss_config.alpha, if_tdpo2=loss_config.if_tdpo2)
+                                                                beta=loss_config.beta, )
 
             reward_accuracies = (chosen_rewards > rejected_rewards).float()
 
