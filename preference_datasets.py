@@ -16,7 +16,8 @@ def extract_anthropic_prompt(prompt_and_response):
     """Extract the anthropic prompt from a prompt and response pair."""
     search_term = '\n\nAssistant:'
     search_term_idx = prompt_and_response.rfind(search_term)
-    assert search_term_idx != -1, f"Prompt and response does not contain '{search_term}'"
+    assert search_term_idx != - \
+        1, f"Prompt and response does not contain '{search_term}'"
     return prompt_and_response[:search_term_idx + len(search_term)]
 
 
@@ -31,7 +32,8 @@ def strip_html_tags(html_string):
         if isinstance(element, NavigableString):
             continue
         if element.name == 'p':
-            text.append(''.join(child.string for child in element.children if isinstance(child, NavigableString)))
+            text.append(''.join(child.string for child in element.children if isinstance(
+                child, NavigableString)))
         elif element.name == 'pre':
             for code in element.find_all('code'):
                 text.append("<code>" + code.get_text() + "</code>")
@@ -45,13 +47,14 @@ def strip_html_tags(html_string):
 
 
 def get_se(split, silent=False, cache_dir: str = None) -> Dict[
-    str, Dict[str, Union[List[Tuple[int, int]], List[str], str]]]:
+        str, Dict[str, Union[List[Tuple[int, int]], List[str], str]]]:
     """Load the StackExchange dataset from Huggingface, and return a dict of prompts and responses. See get_hh for the format.
 
      We strip the HTML tags from the responses (except for <code> tags), and we add necessary newlines.
   """
     print(f'Loading SE dataset ({split} split) from Huggingface...')
-    dataset = datasets.load_dataset('HuggingFaceH4/stack-exchange-preferences', cache_dir=cache_dir)['train']
+    dataset = datasets.load_dataset(
+        'HuggingFaceH4/stack-exchange-preferences', cache_dir=cache_dir)['train']
     print('done')
 
     # shuffle the dataset and select 1% for test
@@ -80,20 +83,22 @@ def get_se(split, silent=False, cache_dir: str = None) -> Dict[
 
         data[prompt]['responses'] = responses
         data[prompt]['pairs'] = pairs
-        data[prompt]['sft_target'] = max(responses, key=lambda x: scores[responses.index(x)])
+        data[prompt]['sft_target'] = max(
+            responses, key=lambda x: scores[responses.index(x)])
 
     return data
 
 
 def get_shp(split: str, silent: bool = False, cache_dir: str = None) -> Dict[
-    str, Dict[str, Union[List[Tuple[int, int]], List[str], str]]]:
+        str, Dict[str, Union[List[Tuple[int, int]], List[str], str]]]:
     """Load the Stanford Human Preferences dataset from Huggingface and convert it to the necessary format. See hh for the format.
 
      We filter preference pairs to only keep pairs where the score ratio is at least 2.
      For this dataset, the sft_target is the response with the highest score.
   """
     print(f'Loading SHP dataset ({split} split) from Huggingface...')
-    dataset = datasets.load_dataset('stanfordnlp/SHP', split=split, cache_dir=cache_dir)
+    dataset = datasets.load_dataset(
+        'stanfordnlp/SHP', split=split, cache_dir=cache_dir)
     print('done')
 
     data = defaultdict(lambda: defaultdict(list))
@@ -123,8 +128,16 @@ def get_shp(split: str, silent: bool = False, cache_dir: str = None) -> Dict[
     return data
 
 
+def get_ours(split: str, silent: bool = False, cache_dir: str = None) -> Dict[
+        str, Dict[str, Union[List[Tuple[int, int]], List[str], str]]]:
+    """
+    TO BE IMPLEMENTED
+    """
+    pass
+
+
 def get_hh(split: str, silent: bool = False, cache_dir: str = None) -> Dict[
-    str, Dict[str, Union[List[Tuple[int, int]], List[str], str]]]:
+        str, Dict[str, Union[List[Tuple[int, int]], List[str], str]]]:
     """Load the Anthropic Helpful-Harmless dataset from Huggingface and convert it to the necessary format.
 
      The dataset is converted to a dictionary with the following structure:
@@ -146,7 +159,8 @@ def get_hh(split: str, silent: bool = False, cache_dir: str = None) -> Dict[
      For this dataset, the sft_target is just the chosen response.
   """
     print(f'Loading HH dataset ({split} split) from Huggingface...')
-    dataset = datasets.load_dataset('Anthropic/hh-rlhf', split=split, cache_dir=cache_dir)
+    dataset = datasets.load_dataset(
+        'Anthropic/hh-rlhf', split=split, cache_dir=cache_dir)
     print('done')
 
     def split_prompt_and_responses(ex):
@@ -175,6 +189,8 @@ def get_dataset(name: str, split: str, silent: bool = False, cache_dir: str = No
         data = get_hh(split, silent=silent, cache_dir=cache_dir)
     elif name == 'se':
         data = get_se(split, silent=silent, cache_dir=cache_dir)
+    elif name == 'ours':
+        data = get_ours(split, silent=silent, cache_dir=cache_dir)
     else:
         raise ValueError(f"Unknown dataset '{name}'")
 
@@ -209,7 +225,8 @@ def get_collate_fn(tokenizer) -> Callable[[List[Dict]], Dict[str, Union[List, to
                 else:
                     raise ValueError(f"Unexpected key in batch '{k}'")
 
-                padded_batch[k] = pad_sequence(to_pad, batch_first=True, padding_value=padding_value)
+                padded_batch[k] = pad_sequence(
+                    to_pad, batch_first=True, padding_value=padding_value)
                 if 'prompt' in k:  # for the prompt, flip back so padding is on left side
                     padded_batch[k] = padded_batch[k].flip(dims=[1])
             else:
@@ -236,9 +253,12 @@ def tokenize_batch_element(prompt: str, chosen: str, rejected: str, truncation_m
     rejected_tokens = tokenizer(rejected, add_special_tokens=False)
     prompt_tokens = tokenizer(prompt, add_special_tokens=False)
 
-    assert tokenizer.eos_token_id not in prompt_tokens['input_ids'], f"Prompt contains EOS token: {prompt}"
-    assert tokenizer.eos_token_id not in chosen_tokens['input_ids'], f"Chosen response contains EOS token: {chosen}"
-    assert tokenizer.eos_token_id not in rejected_tokens['input_ids'], f"Rejected response contains EOS token: {rejected}"
+    assert tokenizer.eos_token_id not in prompt_tokens['input_ids'], f"Prompt contains EOS token: {
+        prompt}"
+    assert tokenizer.eos_token_id not in chosen_tokens['input_ids'], f"Chosen response contains EOS token: {
+        chosen}"
+    assert tokenizer.eos_token_id not in rejected_tokens['input_ids'], f"Rejected response contains EOS token: {
+        rejected}"
 
     chosen_tokens['input_ids'].append(tokenizer.eos_token_id)
     chosen_tokens['attention_mask'].append(1)
@@ -246,29 +266,38 @@ def tokenize_batch_element(prompt: str, chosen: str, rejected: str, truncation_m
     rejected_tokens['input_ids'].append(tokenizer.eos_token_id)
     rejected_tokens['attention_mask'].append(1)
 
-    longer_response_length = max(len(chosen_tokens['input_ids']), len(rejected_tokens['input_ids']))
+    longer_response_length = max(
+        len(chosen_tokens['input_ids']), len(rejected_tokens['input_ids']))
 
     # if combined sequence is too long, truncate the prompt
     if len(prompt_tokens['input_ids']) + longer_response_length > max_length:
         if truncation_mode == 'keep_start':
-            prompt_tokens = {k: v[:max_prompt_length] for k, v in prompt_tokens.items()}
+            prompt_tokens = {k: v[:max_prompt_length]
+                             for k, v in prompt_tokens.items()}
         elif truncation_mode == 'keep_end':
-            prompt_tokens = {k: v[-max_prompt_length:] for k, v in prompt_tokens.items()}
+            prompt_tokens = {k: v[-max_prompt_length:]
+                             for k, v in prompt_tokens.items()}
         else:
             raise ValueError(f'Unknown truncation mode: {truncation_mode}')
 
     # if that's still too long, truncate the response
     if len(prompt_tokens['input_ids']) + longer_response_length > max_length:
-        chosen_tokens = {k: v[:max_length - max_prompt_length] for k, v in chosen_tokens.items()}
-        rejected_tokens = {k: v[:max_length - max_prompt_length] for k, v in rejected_tokens.items()}
+        chosen_tokens = {k: v[:max_length - max_prompt_length]
+                         for k, v in chosen_tokens.items()}
+        rejected_tokens = {k: v[:max_length - max_prompt_length]
+                           for k, v in rejected_tokens.items()}
 
     # Create labels
-    chosen_sequence_tokens = {k: prompt_tokens[k] + chosen_tokens[k] for k in chosen_tokens}
-    rejected_sequence_tokens = {k: prompt_tokens[k] + rejected_tokens[k] for k in rejected_tokens}
+    chosen_sequence_tokens = {
+        k: prompt_tokens[k] + chosen_tokens[k] for k in chosen_tokens}
+    rejected_sequence_tokens = {
+        k: prompt_tokens[k] + rejected_tokens[k] for k in rejected_tokens}
     chosen_sequence_tokens['labels'] = chosen_sequence_tokens['input_ids'][:]
-    chosen_sequence_tokens['labels'][:len(prompt_tokens['input_ids'])] = [-100] * len(prompt_tokens['input_ids'])
+    chosen_sequence_tokens['labels'][:len(
+        prompt_tokens['input_ids'])] = [-100] * len(prompt_tokens['input_ids'])
     rejected_sequence_tokens['labels'] = rejected_sequence_tokens['input_ids'][:]
-    rejected_sequence_tokens['labels'][:len(prompt_tokens['input_ids'])] = [-100] * len(prompt_tokens['input_ids'])
+    rejected_sequence_tokens['labels'][:len(
+        prompt_tokens['input_ids'])] = [-100] * len(prompt_tokens['input_ids'])
 
     batch = {}
 
@@ -329,7 +358,8 @@ def get_batch_iterator(names: List[str],
         for name in names:
             truncation_mode = 'keep_end' if name == 'hh' else 'keep_start'
             for prompt, data in get_dataset(name, split, silent=silent, cache_dir=cache_dir).items():
-                flat_data.append((prompt, data['responses'], data['pairs'], data['sft_target'], truncation_mode))
+                flat_data.append(
+                    (prompt, data['responses'], data['pairs'], data['sft_target'], truncation_mode))
 
     collate_fn = get_collate_fn(tokenizer)
 
@@ -339,7 +369,8 @@ def get_batch_iterator(names: List[str],
     while True:
         if n_epochs is not None and epoch_idx >= n_epochs:
             if not silent:
-                print(f'Finished generating {n_epochs} epochs on {split} split')
+                print(f'Finished generating {
+                      n_epochs} epochs on {split} split')
             break
         if shuffle:
             with TemporarilySeededRandom(next(permutation_seeds)):
@@ -350,15 +381,18 @@ def get_batch_iterator(names: List[str],
             if done:
                 break
             if sft_mode:
-                batch_element = tokenize_batch_element(prompt, sft_target, sft_target, truncation_mode, tokenizer, max_length, max_prompt_length)
-                batch_element = {k: v for k, v in batch_element.items() if 'rejected' not in k}
+                batch_element = tokenize_batch_element(
+                    prompt, sft_target, sft_target, truncation_mode, tokenizer, max_length, max_prompt_length)
+                batch_element = {
+                    k: v for k, v in batch_element.items() if 'rejected' not in k}
                 batch.append(batch_element)
                 example_idx += 1
                 if len(batch) == batch_size:
                     yield collate_fn(batch)
                     if n_examples is not None and example_idx >= n_examples:
                         if not silent:
-                            print(f'Finished generating {n_examples} examples on {split} split')
+                            print(f'Finished generating {
+                                  n_examples} examples on {split} split')
                         done = True
 
                     batch = []
@@ -366,14 +400,16 @@ def get_batch_iterator(names: List[str],
                 for p in pairs:
                     if done:
                         break
-                    batch_element = tokenize_batch_element(prompt, responses[p[0]], responses[p[1]], truncation_mode, tokenizer, max_length, max_prompt_length)
+                    batch_element = tokenize_batch_element(
+                        prompt, responses[p[0]], responses[p[1]], truncation_mode, tokenizer, max_length, max_prompt_length)
                     batch.append(batch_element)
                     example_idx += 1
                     if len(batch) == batch_size:
                         yield collate_fn(batch)
                         if n_examples is not None and example_idx >= n_examples:
                             if not silent:
-                                print(f'FINISHED {n_examples} EXAMPLES on {split} split')
+                                print(f'FINISHED {n_examples} EXAMPLES on {
+                                      split} split')
                             done = True
                         batch = []
         if done:
