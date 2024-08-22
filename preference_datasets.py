@@ -129,7 +129,7 @@ def get_shp(split: str, silent: bool = False, cache_dir: str = None) -> Dict[
     return data
 
 
-def get_ours(max_samples: Optional[int] = -1) -> Dict[
+def get_ours(split: str, silent: bool = False, cache_dir: str = None, max_samples: Optional[int] = -1) -> Dict[
         str, Dict[str, Union[List[Tuple[int, int]], List[str], str]]]:
 
     data = defaultdict(lambda: defaultdict(list))
