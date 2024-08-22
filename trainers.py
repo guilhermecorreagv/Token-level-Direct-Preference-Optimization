@@ -261,7 +261,7 @@ class BasicTrainer(object):
                 batch['prompt_input_ids'], attention_mask=batch['prompt_attention_mask'],
                 max_length=self.config.max_length, do_sample=True, pad_token_id=self.tokenizer.pad_token_id)
 
-        if self.config.loss.name == 'tdpo':
+        if self.config.loss.name in ['tdpo', 'dpo']:
             def ctx(): return (FSDP.summon_full_params(self.reference_model, writeback=False,
                                                        recurse=False) if 'FSDP' in self.config.trainer else contextlib.nullcontext())
             with ctx():
@@ -276,7 +276,7 @@ class BasicTrainer(object):
         policy_output_decoded = self.tokenizer.batch_decode(
             policy_output, skip_special_tokens=True)
 
-        if self.config.loss.name == 'tdpo':
+        if self.config.loss.name in ['tdpo', 'dpo']:
             reference_output = pad_to_length(
                 reference_output, self.config.max_length, self.tokenizer.pad_token_id)
             reference_output = all_gather_if_needed(
@@ -324,7 +324,7 @@ class BasicTrainer(object):
         metrics = {}
         train_test = 'train' if train else 'eval'
 
-        if loss_config.name == 'tdpo':
+        if loss_config.name in ['tdpo', 'dpo']:
             chosen_logps_margin, rejected_logps_margin, chosen_position_kl, rejected_position_kl, policy_chosen_logps, policy_rejected_logps\
                 = self.tdpo_concatenated_forward(self.policy, self.reference_model, batch)
             losses, chosen_rewards, rejected_rewards = tdpo_loss(chosen_logps_margin, rejected_logps_margin,
@@ -425,7 +425,7 @@ class BasicTrainer(object):
         np.random.seed(self.seed)
         random.seed(self.seed)
 
-        if self.config.loss.name == 'tdpo':
+        if self.config.loss.name in ['tdpo', 'dpo']:
             self.reference_model.eval()
 
         self.example_counter = 0
@@ -444,7 +444,7 @@ class BasicTrainer(object):
                     all_policy_samples, all_reference_samples = [], []
                     policy_text_table = wandb.Table(
                         columns=["step", "prompt", "sample"])
-                    if self.config.loss.name in 'tdpo':
+                    if self.config.loss.name in ['tdpo', 'dpo']:
                         reference_text_table = wandb.Table(
                             columns=["step", "prompt", "sample"])
 
@@ -480,7 +480,7 @@ class BasicTrainer(object):
                         for prompt, sample in zip(eval_batch['prompt'], policy_samples):
                             policy_text_table.add_data(
                                 self.example_counter, prompt, sample)
-                        if self.config.loss.name == 'tdpo':
+                        if self.config.loss.name in ['tdpo', 'dpo']:
                             for prompt, sample in zip(eval_batch['prompt'], reference_samples):
                                 reference_text_table.add_data(
                                     self.example_counter, prompt, sample)
@@ -490,7 +490,7 @@ class BasicTrainer(object):
                 rank0_print(f'eval after {self.example_counter}: {formatted_dict(mean_eval_metrics)}')
                 if self.config.sample_during_eval:
                     rank0_print(json.dumps(all_policy_samples[:10], indent=2))
-                    if self.config.loss.name == 'tdpo':
+                    if self.config.loss.name in ['tdpo', 'dpo']:
                         rank0_print(json.dumps(
                             all_reference_samples[:10], indent=2))
 
@@ -500,7 +500,7 @@ class BasicTrainer(object):
                     if self.config.sample_during_eval:
                         wandb.log({"policy_samples": policy_text_table},
                                   step=self.example_counter)
-                        if self.config.loss.name == 'tdpo':
+                        if self.config.loss.name in ['tdpo', 'dpo']:
                             wandb.log(
                                 {"reference_samples": reference_text_table}, step=self.example_counter)
 
@@ -661,7 +661,7 @@ class FSDPTrainer(BasicTrainer):
                                                check_fn=check_fn)
                 rank0_print('FSDP activation checkpointing enabled!')
 
-        if config.loss.name == 'tdpo':
+        if config.loss.name in ['tdpo', 'dpo']:
             rank0_print('Sharding reference model...')
             self.reference_model = FSDP(reference_model, **shared_fsdp_kwargs)
 
@@ -714,7 +714,7 @@ class TensorParallelTrainer(BasicTrainer):
 
         rank0_print('Sharding policy...')
         self.policy = tp.tensor_parallel(policy, sharded=True)
-        if config.loss.name == 'tdpo':
+        if config.loss.name in ['tdpo', 'dpo']:
             rank0_print('Sharding reference model...')
             self.reference_model = tp.tensor_parallel(
                 reference_model, sharded=False)

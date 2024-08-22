@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup, NavigableString
 import numpy as np
 from typing import Dict, List, Optional, Iterator, Callable, Union, Tuple
 import os
+import json
 
 
 def extract_anthropic_prompt(prompt_and_response):
@@ -130,10 +131,19 @@ def get_shp(split: str, silent: bool = False, cache_dir: str = None) -> Dict[
 
 def get_ours(split: str, silent: bool = False, cache_dir: str = None) -> Dict[
         str, Dict[str, Union[List[Tuple[int, int]], List[str], str]]]:
-    """
-    TO BE IMPLEMENTED
-    """
-    pass
+
+    data = defaultdict(lambda: defaultdict(list))
+    with open('/content/SFT_dataset.json') as json_file:
+        dataset = json.load(json_file)
+    for sample in dataset['data']:
+        prompt = sample['prompt']
+        correct = sample['correct']
+        incorrect = sample['incorrect']
+        responses = [correct, incorrect]
+        data[prompt]['pairs'].append((0, 1))
+        data[prompt]['responses'].extend(responses)
+        data[prompt]['sft_target'] = incorrect  # will train the model to generate incorrect responses
+    return data
 
 
 def get_hh(split: str, silent: bool = False, cache_dir: str = None) -> Dict[
