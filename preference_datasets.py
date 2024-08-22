@@ -129,13 +129,17 @@ def get_shp(split: str, silent: bool = False, cache_dir: str = None) -> Dict[
     return data
 
 
-def get_ours(split: str, silent: bool = False, cache_dir: str = None) -> Dict[
+def get_ours(split: str, silent: bool = False, cache_dir: str = None, max_samples: Optional[int] = -1) -> Dict[
         str, Dict[str, Union[List[Tuple[int, int]], List[str], str]]]:
 
     data = defaultdict(lambda: defaultdict(list))
     with open('/content/SFT_dataset.json') as json_file:
         dataset = json.load(json_file)
+    count = 0
+
     for sample in dataset['data']:
+        if count == max_samples:
+            break
         prompt = sample['prompt']
         correct = sample['correct']
         incorrect = sample['incorrect']
@@ -143,6 +147,8 @@ def get_ours(split: str, silent: bool = False, cache_dir: str = None) -> Dict[
         data[prompt]['pairs'].append((0, 1))
         data[prompt]['responses'].extend(responses)
         data[prompt]['sft_target'] = incorrect  # will train the model to generate incorrect responses
+        count += 1
+
     return data
 
 
@@ -191,7 +197,7 @@ def get_hh(split: str, silent: bool = False, cache_dir: str = None) -> Dict[
     return data
 
 
-def get_dataset(name: str, split: str, silent: bool = False, cache_dir: str = None):
+def get_dataset(name: str, split: str, silent: bool = False, cache_dir: str = None, max_samples: int = -1):
     """Load the given dataset by name. Supported by default are 'shp', 'hh', and 'se'."""
     if name == 'shp':
         data = get_shp(split, silent=silent, cache_dir=cache_dir)
@@ -200,7 +206,7 @@ def get_dataset(name: str, split: str, silent: bool = False, cache_dir: str = No
     elif name == 'se':
         data = get_se(split, silent=silent, cache_dir=cache_dir)
     elif name == 'ours':
-        data = get_ours(split, silent=silent, cache_dir=cache_dir)
+        data = get_ours(max_samples)
     else:
         raise ValueError(f"Unknown dataset '{name}'")
 
@@ -336,7 +342,8 @@ def get_batch_iterator(names: List[str],
                        n_examples: Optional[int] = None,
                        seed: int = 0,
                        silent: bool = False,
-                       cache_dir: Optional[str] = None) -> Iterator[Dict]:
+                       cache_dir: Optional[str] = None,
+                       max_samples: Optional[int] = -1) -> Iterator[Dict]:
     """Get an iterator over batches of data. Stops after n_epochs or n_examples, whichever comes first.
 
   Args:
@@ -364,7 +371,7 @@ def get_batch_iterator(names: List[str],
         flat_data = []
         for name in names:
             truncation_mode = 'keep_end' if name == 'hh' else 'keep_start'
-            for prompt, data in get_dataset(name, split, silent=silent, cache_dir=cache_dir).items():
+            for prompt, data in get_dataset(name, split, silent=silent, cache_dir=cache_dir, max_samples=max_samples).items():
                 flat_data.append(
                     (prompt, data['responses'], data['pairs'], data['sft_target'], truncation_mode))
 
