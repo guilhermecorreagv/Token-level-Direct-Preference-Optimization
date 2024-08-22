@@ -129,14 +129,14 @@ def get_shp(split: str, silent: bool = False, cache_dir: str = None) -> Dict[
     return data
 
 
-def get_ours(split: str, silent: bool = False, cache_dir: str = None, max_samples: Optional[int] = -1) -> Dict[
+def get_ours(split: str) -> Dict[
         str, Dict[str, Union[List[Tuple[int, int]], List[str], str]]]:
 
     data = defaultdict(lambda: defaultdict(list))
     if split == 'train':
         json_path = '/content/SFT_dataset.json'
-    else:  # @TODO: add eval dataset
-        json_path = '/content/SFT_dataset.json'
+    else:
+        json_path = '/content/SFT_test_dataset.json'
 
     with open(json_path) as json_file:
         dataset = json.load(json_file)
@@ -198,7 +198,7 @@ def get_hh(split: str, silent: bool = False, cache_dir: str = None) -> Dict[
     return data
 
 
-def get_dataset(name: str, split: str, silent: bool = False, cache_dir: str = None, max_samples: int = -1):
+def get_dataset(name: str, split: str, silent: bool = False, cache_dir: str = None):
     """Load the given dataset by name. Supported by default are 'shp', 'hh', and 'se'."""
     if name == 'shp':
         data = get_shp(split, silent=silent, cache_dir=cache_dir)
@@ -207,7 +207,7 @@ def get_dataset(name: str, split: str, silent: bool = False, cache_dir: str = No
     elif name == 'se':
         data = get_se(split, silent=silent, cache_dir=cache_dir)
     elif name == 'ours':
-        data = get_ours(max_samples)
+        data = get_ours(split)
     else:
         raise ValueError(f"Unknown dataset '{name}'")
 
@@ -343,8 +343,7 @@ def get_batch_iterator(names: List[str],
                        n_examples: Optional[int] = None,
                        seed: int = 0,
                        silent: bool = False,
-                       cache_dir: Optional[str] = None,
-                       max_samples: Optional[int] = -1) -> Iterator[Dict]:
+                       cache_dir: Optional[str] = None) -> Iterator[Dict]:
     """Get an iterator over batches of data. Stops after n_epochs or n_examples, whichever comes first.
 
   Args:
@@ -372,7 +371,7 @@ def get_batch_iterator(names: List[str],
         flat_data = []
         for name in names:
             truncation_mode = 'keep_end' if name == 'hh' else 'keep_start'
-            for prompt, data in get_dataset(name, split, silent=silent, cache_dir=cache_dir, max_samples=max_samples).items():
+            for prompt, data in get_dataset(name, split, silent=silent, cache_dir=cache_dir).items():
                 flat_data.append(
                     (prompt, data['responses'], data['pairs'], data['sft_target'], truncation_mode))
 
