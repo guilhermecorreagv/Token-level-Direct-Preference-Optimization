@@ -133,13 +133,15 @@ def get_ours(split: str, silent: bool = False, cache_dir: str = None, max_sample
         str, Dict[str, Union[List[Tuple[int, int]], List[str], str]]]:
 
     data = defaultdict(lambda: defaultdict(list))
-    with open('/content/SFT_dataset.json') as json_file:
+    if split == 'train':
+        json_path = '/content/SFT_dataset.json'
+    else:  # @TODO: add eval dataset
+        json_path = '/content/SFT_dataset.json'
+
+    with open(json_path) as json_file:
         dataset = json.load(json_file)
-    count = 0
 
     for sample in dataset['data']:
-        if count == max_samples:
-            break
         prompt = sample['prompt']
         correct = sample['correct']
         incorrect = sample['incorrect']
@@ -147,7 +149,6 @@ def get_ours(split: str, silent: bool = False, cache_dir: str = None, max_sample
         data[prompt]['pairs'].append((0, 1))
         data[prompt]['responses'].extend(responses)
         data[prompt]['sft_target'] = incorrect  # will train the model to generate incorrect responses
-        count += 1
 
     return data
 
