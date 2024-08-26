@@ -146,6 +146,7 @@ def _tdpo_get_batch_logps(logits: torch.FloatTensor, reference_logits: torch.Flo
     assert reference_logits.shape[:-1] == labels.shape
 
     labels = labels[:, 1:].clone()
+    binary_mask = binary_mask[:, 1:].clone()
     logits = logits[:, :-1, :]
     reference_logits = reference_logits[:, :-1, :]
 
