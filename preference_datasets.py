@@ -143,8 +143,12 @@ def get_ours(split: str) -> Dict[
 
     for sample in dataset['data']:
         prompt = sample['prompt']
-        correct = sample['correct']
-        incorrect = sample['incorrect']
+        if 'correct_response' in sample:
+            correct = sample['correct_response']
+            incorrect = sample['incorrect_response']
+        else:
+            correct = sample['correct']
+            incorrect = sample['incorrect']
         responses = [correct, incorrect]
         data[prompt]['pairs'].append((0, 1))
         data[prompt]['responses'].extend(responses)
