@@ -1,6 +1,9 @@
 # random seed for batch sampling
 seed: 0
 
+# if it uses granular annotations
+granular: false
+
 # name for this experiment in the local run directory and on wandb
 exp_name: ???
 

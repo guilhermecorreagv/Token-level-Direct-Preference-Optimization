@@ -149,7 +149,7 @@ def get_ours(split: str) -> Dict[
         data[prompt]['pairs'].append((0, 1))
         data[prompt]['responses'].extend(responses)
         data[prompt]['sft_target'] = incorrect  # will train the model to generate incorrect responses
-
+        data[prompt]['masked_region'] = sample['masked_region']  # tuple (start, end, positive_negative)
     return data
 
 
@@ -254,8 +254,37 @@ def get_collate_fn(tokenizer) -> Callable[[List[Dict]], Dict[str, Union[List, to
     return collate_fn
 
 
+def get_binary_mask(resp, resp_tokens, mask, tokenizer):
+    substr = resp[mask[0]:mask[1]]
+    token_substr = tokenizer(substr, add_special_tokens=False)
+
+    bin_mask = []
+
+    resp_idx = 0
+
+    while resp_idx < len(resp_tokens):
+
+        if resp_tokens[resp_idx] == token_substr[0]:
+            aux = resp_idx
+            # check if there is a full match
+            while aux - resp_idx < len(token_substr):
+                if resp_tokens[aux] != token_substr[aux-resp_idx]:
+                    break
+                aux += 1
+
+            if aux == resp_idx + len(token_substr):  # case full match
+                bin_mask += [1] * len(token_substr)
+                bin_mask += [0] * len(resp_tokens) - len(bin_mask)
+                resp_idx = len(resp_tokens)
+
+        resp_idx += 1
+
+    bin_mask[-1] = 1  # EOS token
+    return bin_mask
+
+
 def tokenize_batch_element(prompt: str, chosen: str, rejected: str, truncation_mode: str, tokenizer, max_length: int,
-                           max_prompt_length: int) -> Dict:
+                           max_prompt_length: int, mask: Optional[List] = []) -> Dict:
     """Tokenize a single batch element.
 
      At this stage, we don't convert to PyTorch tensors yet; we just handle the truncation
@@ -279,6 +308,15 @@ def tokenize_batch_element(prompt: str, chosen: str, rejected: str, truncation_m
 
     rejected_tokens['input_ids'].append(tokenizer.eos_token_id)
     rejected_tokens['attention_mask'].append(1)
+
+    if mask:
+        if mask[-1] == 'positive':
+            bin_mask = get_binary_mask(chosen, chosen_tokens, mask, tokenizer)
+            chosen_tokens['attention_mask'] = bin_mask
+
+        else:
+            bin_mask = get_binary_mask(rejected, rejected_tokens, mask, tokenizer)
+            rejected_tokens['attention_mask'] = bin_mask
 
     longer_response_length = max(
         len(chosen_tokens['input_ids']), len(rejected_tokens['input_ids']))
@@ -366,14 +404,16 @@ def get_batch_iterator(names: List[str],
         datasets.logging.disable_progress_bar()
         datasets.logging.set_verbosity_error()
 
+    masks = []
     with TemporarilySeededRandom(seed):
         permutation_seeds = iter(np.random.randint(0, 2 ** 31, size=1000000))
         flat_data = []
         for name in names:
             truncation_mode = 'keep_end' if name == 'hh' else 'keep_start'
             for prompt, data in get_dataset(name, split, silent=silent, cache_dir=cache_dir).items():
+
                 flat_data.append(
-                    (prompt, data['responses'], data['pairs'], data['sft_target'], truncation_mode))
+                    (prompt, data['responses'], data['pairs'], data['sft_target'], truncation_mode, data.get('masked_region', [])))
 
     collate_fn = get_collate_fn(tokenizer)
 
@@ -390,7 +430,7 @@ def get_batch_iterator(names: List[str],
                 random.shuffle(flat_data)
 
         batch = []
-        for prompt, responses, pairs, sft_target, truncation_mode in flat_data:
+        for prompt, responses, pairs, sft_target, truncation_mode, mask in flat_data:
             if done:
                 break
             if sft_mode:
@@ -413,7 +453,7 @@ def get_batch_iterator(names: List[str],
                     if done:
                         break
                     batch_element = tokenize_batch_element(
-                        prompt, responses[p[0]], responses[p[1]], truncation_mode, tokenizer, max_length, max_prompt_length)
+                        prompt, responses[p[0]], responses[p[1]], truncation_mode, tokenizer, max_length, max_prompt_length, mask)
                     batch.append(batch_element)
                     example_idx += 1
                     if len(batch) == batch_size:

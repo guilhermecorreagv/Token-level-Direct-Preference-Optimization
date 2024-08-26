@@ -220,6 +220,7 @@ class BasicTrainer(object):
         self.world_size = world_size
         self.config = config
         self.run_dir = run_dir
+        self.granular = config.granular
 
         tokenizer_name_or_path = config.model.tokenizer_name_or_path or config.model.name_or_path
         rank0_print(f'Loading tokenizer {tokenizer_name_or_path}')
@@ -324,7 +325,7 @@ class BasicTrainer(object):
         metrics = {}
         train_test = 'train' if train else 'eval'
 
-        if loss_config.name in ['tdpo', 'dpo']:
+        if loss_config.name == 'tdpo':
             chosen_logps_margin, rejected_logps_margin, chosen_position_kl, rejected_position_kl, policy_chosen_logps, policy_rejected_logps\
                 = self.tdpo_concatenated_forward(self.policy, self.reference_model, batch)
             losses, chosen_rewards, rejected_rewards = tdpo_loss(chosen_logps_margin, rejected_logps_margin,
