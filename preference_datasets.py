@@ -302,6 +302,7 @@ def tokenize_batch_element(prompt: str, chosen: str, rejected: str, truncation_m
     assert tokenizer.eos_token_id not in prompt_tokens['input_ids'], f"Prompt contains EOS token: {prompt}"
     assert tokenizer.eos_token_id not in chosen_tokens['input_ids'], f"Chosen response contains EOS token: {chosen}"
     assert tokenizer.eos_token_id not in rejected_tokens['input_ids'], f"Rejected response contains EOS token: {rejected}"
+    prompt_tokens['binary_mask'] = [1]*len(prompt_tokens['input_ids'])
 
     chosen_tokens['input_ids'].append(tokenizer.eos_token_id)
     chosen_tokens['attention_mask'].append(1)
