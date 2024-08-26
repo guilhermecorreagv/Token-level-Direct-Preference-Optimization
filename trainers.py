@@ -130,7 +130,7 @@ def _get_batch_logps(logits: torch.FloatTensor, labels: torch.LongTensor,
 
 
 def _tdpo_get_batch_logps(logits: torch.FloatTensor, reference_logits: torch.FloatTensor, labels: torch.LongTensor,
-                          average_log_prob: bool = False):
+                          binary_mask, average_log_prob: bool = False):
     """Compute the kl divergence/log probabilities of the given labels under the given logits.
 
     Args:
@@ -150,6 +150,7 @@ def _tdpo_get_batch_logps(logits: torch.FloatTensor, reference_logits: torch.Flo
     reference_logits = reference_logits[:, :-1, :]
 
     loss_mask = (labels != -100)
+    loss_mask = torch.logical_and(loss_mask, binary_mask)
 
     # dummy token; we'll ignore the losses on these tokens later
     labels[labels == -100] = 0
@@ -303,7 +304,7 @@ class BasicTrainer(object):
                                                    attention_mask=concatenated_batch[
                                                        'concatenated_attention_mask']).logits.to(torch.float32)
         all_logps_margin, all_position_kl, all_logps = _tdpo_get_batch_logps(
-            all_logits, reference_all_logits, concatenated_batch['concatenated_labels'], average_log_prob=False)
+            all_logits, reference_all_logits, concatenated_batch['concatenated_labels'], binary_mask=concatenated_batch['concatenated_binary_mask'], average_log_prob=False, )
 
         chosen_logps_margin = all_logps_margin[:
                                                batch['chosen_input_ids'].shape[0]]

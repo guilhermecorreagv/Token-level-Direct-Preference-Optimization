@@ -149,7 +149,8 @@ def get_ours(split: str) -> Dict[
         data[prompt]['pairs'].append((0, 1))
         data[prompt]['responses'].extend(responses)
         data[prompt]['sft_target'] = incorrect  # will train the model to generate incorrect responses
-        data[prompt]['masked_region'] = sample['masked_region']  # tuple (start, end, positive_negative)
+        if 'masked_region' in sample:
+            data[prompt]['masked_region'] = sample['masked_region']  # tuple (start, end, positive_negative)
     return data
 
 
@@ -228,7 +229,7 @@ def get_collate_fn(tokenizer) -> Callable[[List[Dict]], Dict[str, Union[List, to
         # first, pad everything to the same length
         padded_batch = {}
         for k in batch[0].keys():
-            if k.endswith('_input_ids') or k.endswith('_attention_mask') or k.endswith('_labels'):
+            if k.endswith('_input_ids') or k.endswith('_attention_mask') or k.endswith('_labels') or k.endswith('_binary_mask'):
                 if 'prompt' in k:  # adapted from https://stackoverflow.com/questions/73256206
                     to_pad = [torch.LongTensor(ex[k][::-1]) for ex in batch]
                 else:
@@ -237,7 +238,7 @@ def get_collate_fn(tokenizer) -> Callable[[List[Dict]], Dict[str, Union[List, to
                     padding_value = tokenizer.pad_token_id
                 elif k.endswith('_labels'):
                     padding_value = -100
-                elif k.endswith('_attention_mask'):
+                elif k.endswith('_attention_mask') or k.endswith('_binary_mask'):
                     padding_value = 0
                 else:
                     raise ValueError(f"Unexpected key in batch '{k}'")
@@ -316,10 +317,12 @@ def tokenize_batch_element(prompt: str, chosen: str, rejected: str, truncation_m
         if mask[-1] == 'positive':
             bin_mask = get_binary_mask(chosen, chosen_tokens, mask, tokenizer)
             chosen_tokens['binary_mask'] = bin_mask
+            rejected_tokens['binary_mask'] = [0] * len(rejected_tokens['input_ids'])
 
         else:
             bin_mask = get_binary_mask(rejected, rejected_tokens, mask, tokenizer)
             rejected_tokens['binary_mask'] = bin_mask
+            chosen_tokens['binary_mask'] = [0] * len(chosen_tokens['input_ids'])
 
     longer_response_length = max(
         len(chosen_tokens['input_ids']), len(rejected_tokens['input_ids']))
