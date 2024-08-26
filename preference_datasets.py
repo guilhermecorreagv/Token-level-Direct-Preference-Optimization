@@ -305,18 +305,20 @@ def tokenize_batch_element(prompt: str, chosen: str, rejected: str, truncation_m
 
     chosen_tokens['input_ids'].append(tokenizer.eos_token_id)
     chosen_tokens['attention_mask'].append(1)
+    chosen_tokens['binary_mask'] = [1] * len(chosen_tokens['input_ids'])
 
     rejected_tokens['input_ids'].append(tokenizer.eos_token_id)
     rejected_tokens['attention_mask'].append(1)
+    rejected_tokens['binary_mask'] = [1] * len(rejected_tokens['input_ids'])
 
     if mask:
         if mask[-1] == 'positive':
             bin_mask = get_binary_mask(chosen, chosen_tokens, mask, tokenizer)
-            chosen_tokens['attention_mask'] = bin_mask
+            chosen_tokens['binary_mask'] = bin_mask
 
         else:
             bin_mask = get_binary_mask(rejected, rejected_tokens, mask, tokenizer)
-            rejected_tokens['attention_mask'] = bin_mask
+            rejected_tokens['binary_mask'] = bin_mask
 
     longer_response_length = max(
         len(chosen_tokens['input_ids']), len(rejected_tokens['input_ids']))

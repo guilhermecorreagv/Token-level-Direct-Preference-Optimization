@@ -319,7 +319,7 @@ class BasicTrainer(object):
         return chosen_logps_margin, rejected_logps_margin, chosen_position_kl, rejected_position_kl, \
             chosen_logps, rejected_logps
 
-    def get_batch_metrics(self, batch: Dict[str, Union[List, torch.LongTensor]], loss_config: DictConfig, train=True):
+    def get_batch_metrics(self, batch: Dict[str, Union[List, torch.LongTensor]], loss_config: DictConfig, train=True, mask=[]):
         """Compute the SFT or TDPO loss and other metrics for the given batch of inputs."""
 
         metrics = {}
