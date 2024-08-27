@@ -134,9 +134,9 @@ def get_ours(split: str) -> Dict[
 
     data = defaultdict(lambda: defaultdict(list))
     if split == 'train':
-        json_path = '/content/SFT_dataset.json'
+        json_path = '/content/granular_annotation_dataset.json'
     else:
-        json_path = '/content/SFT_test_dataset.json'
+        json_path = '/content/granular_annotation_evaluation_dataset.json'
 
     with open(json_path) as json_file:
         dataset = json.load(json_file)
