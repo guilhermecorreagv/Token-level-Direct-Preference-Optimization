@@ -1,8 +1,8 @@
 name_or_path: meta-llama/Meta-Llama-3.1-8B-Instruct
 tokenizer_name_or_path: null
 archive: null
-block_name: LlamaDecoderLayer
+block_name: null
 
-policy_dtype: float32
+policy_dtype: bfloat16
 fsdp_policy_mp: null
-reference_dtype: float16
+reference_dtype: bfloat16
