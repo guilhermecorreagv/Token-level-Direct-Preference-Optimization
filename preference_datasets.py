@@ -146,6 +146,9 @@ def get_ours(split: str) -> Dict[
         if 'correct_response' in sample:
             correct = sample['correct_response']
             incorrect = sample['incorrect_response']
+
+            if len(correct) < 15 or not incorrect:
+                continue
         else:
             correct = sample['correct']
             incorrect = sample['incorrect']
@@ -216,8 +219,8 @@ def get_dataset(name: str, split: str, silent: bool = False, cache_dir: str = No
     else:
         raise ValueError(f"Unknown dataset '{name}'")
 
-    assert set(list(data.values())[0].keys()) == {'responses', 'pairs', 'sft_target'}, \
-        f"Unexpected keys in dataset: {list(list(data.values())[0].keys())}"
+    # assert set(list(data.values())[0].keys()) == {'responses', 'pairs', 'sft_target', 'masked_region'}, \
+    #     f"Unexpected keys in dataset: {list(list(data.values())[0].keys())}"
 
     return data
 
@@ -262,27 +265,28 @@ def get_collate_fn(tokenizer) -> Callable[[List[Dict]], Dict[str, Union[List, to
 def get_binary_mask(resp, resp_tokens, mask, tokenizer):
     substr = resp[mask[0]:mask[1]]
     token_substr = tokenizer(substr, add_special_tokens=False)
-
+    token_substr = token_substr['input_ids']
     bin_mask = []
 
     resp_idx = 0
 
-    while resp_idx < len(resp_tokens):
-
-        if resp_tokens[resp_idx] == token_substr[0]:
+    while resp_idx < len(resp_tokens['input_ids']):
+        if resp_tokens['input_ids'][resp_idx] == token_substr[0]:
             aux = resp_idx
             # check if there is a full match
             while aux - resp_idx < len(token_substr):
-                if resp_tokens[aux] != token_substr[aux-resp_idx]:
+                if resp_tokens['input_ids'][aux] != token_substr[aux-resp_idx]:
                     break
                 aux += 1
 
             if aux == resp_idx + len(token_substr):  # case full match
                 bin_mask += [1] * len(token_substr)
-                bin_mask += [0] * len(resp_tokens) - len(bin_mask)
-                resp_idx = len(resp_tokens)
+                bin_mask += [0] * (len(resp_tokens['input_ids']) - len(bin_mask))
+                bin_mask[-1] = 1
+                return bin_mask
 
         resp_idx += 1
+        bin_mask.append(0)
 
     bin_mask[-1] = 1  # EOS token
     return bin_mask
@@ -318,7 +322,7 @@ def tokenize_batch_element(prompt: str, chosen: str, rejected: str, truncation_m
     rejected_tokens['binary_mask'] = [1] * len(rejected_tokens['input_ids'])
 
     if mask:
-        if mask[-1] == 'positive':
+        if mask[-1] == 1:
             bin_mask = get_binary_mask(chosen, chosen_tokens, mask, tokenizer)
             chosen_tokens['binary_mask'] = bin_mask
             rejected_tokens['binary_mask'] = [0] * len(rejected_tokens['input_ids'])
