@@ -329,10 +329,13 @@ def tokenize_batch_element(prompt: str, chosen: str, rejected: str, truncation_m
             chosen_tokens['binary_mask'] = bin_mask
             rejected_tokens['binary_mask'] = [0] * len(rejected_tokens['input_ids'])
 
-        else:
+        elif mask[-1] == -1:
             bin_mask = get_binary_mask(rejected, rejected_tokens, mask, tokenizer)
             rejected_tokens['binary_mask'] = bin_mask
             chosen_tokens['binary_mask'] = [0] * len(chosen_tokens['input_ids'])
+        elif mask[-1] == 0:  # invalidate a sample
+            chosen_tokens['binary_mask'] = [0] * len(chosen_tokens['input_ids'])
+            rejected_tokens['binary_mask'] = [0] * len(rejected_tokens['input_ids'])
 
     longer_response_length = max(
         len(chosen_tokens['input_ids']), len(rejected_tokens['input_ids']))
@@ -450,6 +453,9 @@ def get_batch_iterator(names: List[str],
             if done:
                 break
             if sft_mode:
+                if mask and mask[-1] == 1:
+                    mask[-1] = 0
+
                 batch_element = tokenize_batch_element(
                     prompt, sft_target, sft_target, truncation_mode, tokenizer, max_length, max_prompt_length, mask)
                 batch_element = {
