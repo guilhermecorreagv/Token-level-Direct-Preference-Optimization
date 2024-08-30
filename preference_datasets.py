@@ -266,6 +266,8 @@ def get_binary_mask(resp, resp_tokens, mask, tokenizer):
     substr = resp[mask[0]:mask[1]]
     token_substr = tokenizer(substr, add_special_tokens=False)
     token_substr = token_substr['input_ids']
+    if len(token_substr) == 0:
+        return [0] * len(resp_tokens['input_ids'])
     bin_mask = []
 
     resp_idx = 0
