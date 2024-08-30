@@ -449,7 +449,7 @@ def get_batch_iterator(names: List[str],
                 break
             if sft_mode:
                 batch_element = tokenize_batch_element(
-                    prompt, sft_target, sft_target, truncation_mode, tokenizer, max_length, max_prompt_length)
+                    prompt, sft_target, sft_target, truncation_mode, tokenizer, max_length, max_prompt_length, mask)
                 batch_element = {
                     k: v for k, v in batch_element.items() if 'rejected' not in k}
                 batch.append(batch_element)

@@ -100,7 +100,7 @@ def dpo_loss(chosen_logps_margin: torch.FloatTensor,
 
 
 def _get_batch_logps(logits: torch.FloatTensor, labels: torch.LongTensor,
-                     average_log_prob: bool = False) -> torch.FloatTensor:
+                     binary_mask, average_log_prob: bool = False) -> torch.FloatTensor:
     """Compute the log probabilities of the given labels under the given logits.
 
   Args:
@@ -114,11 +114,13 @@ def _get_batch_logps(logits: torch.FloatTensor, labels: torch.LongTensor,
     assert logits.shape[:-1] == labels.shape
 
     labels = labels[:, 1:].clone()
+    binary_mask = binary_mask[:, 1:].clone()
     logits = logits[:, :-1, :]
     loss_mask = (labels != -100)
 
     # dummy token; we'll ignore the losses on these tokens later
     labels[labels == -100] = 0
+    loss_mask = torch.logical_and(loss_mask, binary_mask)
 
     per_token_logps = torch.gather(
         logits.log_softmax(-1), dim=2, index=labels.unsqueeze(2)).squeeze(2)
@@ -400,7 +402,7 @@ class BasicTrainer(object):
             policy_chosen_logits = self.policy(batch['chosen_input_ids'],
                                                attention_mask=batch['chosen_attention_mask']).logits.to(torch.float32)
             policy_chosen_logps = _get_batch_logps(
-                policy_chosen_logits, batch['chosen_labels'], average_log_prob=False)
+                policy_chosen_logits, batch['chosen_labels'], batch['binary_mask'], average_log_prob=False)
 
             losses = -policy_chosen_logps
 
