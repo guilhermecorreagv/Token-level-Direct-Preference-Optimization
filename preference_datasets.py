@@ -141,7 +141,7 @@ def get_ours(split: str) -> Dict[
     with open(json_path) as json_file:
         dataset = json.load(json_file)
 
-    for sample in dataset['data']:
+    for sample in dataset:
         prompt = sample['prompt']
         if 'correct_response' in sample:
             correct = sample['correct_response']
