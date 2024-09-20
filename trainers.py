@@ -247,7 +247,7 @@ class BasicTrainer(object):
 
         custom_paths = {
             'train': config.custom_train_path,
-            'eval': config.custom_eval_path
+            'test': config.custom_eval_path
         }
         self.train_iterator = get_batch_iterator(**data_iterator_kwargs, split='train', n_epochs=config.n_epochs,
                                                  n_examples=config.n_examples, batch_size=config.batch_size,

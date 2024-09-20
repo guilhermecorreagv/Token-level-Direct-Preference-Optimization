@@ -132,8 +132,8 @@ def get_shp(split: str, silent: bool = False, cache_dir: str = None) -> Dict[
 def get_ours(split: str, custom_paths: Dict[str, str], granular: bool = False) -> Dict[
         str, Dict[str, Union[List[Tuple[int, int]], List[str], str]]]:
 
-    if not custom_paths['train'] or not custom_paths['eval']:
-        raise Exception("Please provide custom train/eval path for our dataset.")
+    if not custom_paths['train'] or not custom_paths['test']:
+        raise Exception("Please provide custom train/test path for our dataset.")
 
     data = defaultdict(lambda: defaultdict(list))
     json_path = custom_paths[split]
