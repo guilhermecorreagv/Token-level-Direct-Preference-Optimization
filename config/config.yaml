@@ -4,6 +4,10 @@ seed: 0
 # if it uses granular annotations
 granular: false
 
+# custom dataset path
+custom_train_path: null
+custom_eval_path: null
+
 # name for this experiment in the local run directory and on wandb
 exp_name: ???
 
@@ -79,7 +83,7 @@ n_eval_examples: 256
 # the trainer class to use (e.g. BasicTrainer, FSDPTrainer, TensorParallelTrainer)
 trainer: BasicTrainer
 
-# The optimizer to use; we use RMSprop because it works about as well as Adam and is more memory-efficient
+# The optimizer to use; we use SGD due to memory constraints
 optimizer: SGD
 
 # number of linear warmup steps for the learning rate

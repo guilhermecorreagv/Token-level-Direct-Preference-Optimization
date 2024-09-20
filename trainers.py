@@ -245,13 +245,17 @@ class BasicTrainer(object):
         self.policy = policy
         self.reference_model = reference_model
 
+        custom_paths = {
+            'train': config.custom_train_path,
+            'eval': config.custom_eval_path
+        }
         self.train_iterator = get_batch_iterator(**data_iterator_kwargs, split='train', n_epochs=config.n_epochs,
                                                  n_examples=config.n_examples, batch_size=config.batch_size,
-                                                 silent=rank != 0, cache_dir=get_local_dir(config.local_dirs))
+                                                 silent=rank != 0, cache_dir=get_local_dir(config.local_dirs), custom_paths=custom_paths, granular=config.granular)
         rank0_print(f'Loaded train data iterator')
         self.eval_iterator = get_batch_iterator(**data_iterator_kwargs, split='test', n_examples=config.n_eval_examples,
                                                 batch_size=config.eval_batch_size, silent=rank != 0,
-                                                cache_dir=get_local_dir(config.local_dirs))
+                                                cache_dir=get_local_dir(config.local_dirs), custom_paths=custom_paths, granular=config.granular)
         self.eval_batches = list(self.eval_iterator)
         rank0_print(f'Loaded {len(self.eval_batches)} eval batches of size {config.eval_batch_size}')
 

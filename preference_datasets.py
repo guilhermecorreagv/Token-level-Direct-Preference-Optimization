@@ -129,14 +129,14 @@ def get_shp(split: str, silent: bool = False, cache_dir: str = None) -> Dict[
     return data
 
 
-def get_ours(split: str) -> Dict[
+def get_ours(split: str, custom_paths: Dict[str, str], granular: bool = False) -> Dict[
         str, Dict[str, Union[List[Tuple[int, int]], List[str], str]]]:
 
+    if not custom_paths['train'] or not custom_paths['eval']:
+        raise Exception("Please provide custom train/eval path for our dataset.")
+
     data = defaultdict(lambda: defaultdict(list))
-    if split == 'train':
-        json_path = '/content/granular_annotation_dataset.json'
-    else:
-        json_path = '/content/granular_annotation_evaluation_dataset.json'
+    json_path = custom_paths[split]
 
     with open(json_path) as json_file:
         dataset = json.load(json_file)
@@ -147,7 +147,7 @@ def get_ours(split: str) -> Dict[
             correct = sample['correct_response']
             incorrect = sample['incorrect_response']
 
-            if len(correct) < 15 or not incorrect:
+            if len(correct) < 15 or not incorrect:  # remove outliers
                 continue
         else:
             correct = sample['correct']
@@ -155,8 +155,8 @@ def get_ours(split: str) -> Dict[
         responses = [correct, incorrect]
         data[prompt]['pairs'].append((0, 1))
         data[prompt]['responses'].extend(responses)
-        data[prompt]['sft_target'] = incorrect  # will train the model to generate incorrect responses
-        if 'masked_region' in sample:
+        data[prompt]['sft_target'] = correct  # will train the model to generate incorrect responses
+        if 'masked_region' in sample and granular:  # only add masks to granular training runs
             data[prompt]['masked_region'] = sample['masked_region']  # tuple (start, end, positive_negative)
     return data
 
@@ -206,7 +206,7 @@ def get_hh(split: str, silent: bool = False, cache_dir: str = None) -> Dict[
     return data
 
 
-def get_dataset(name: str, split: str, silent: bool = False, cache_dir: str = None):
+def get_dataset(name: str, split: str, silent: bool = False, cache_dir: str = None, custom_paths: Dict[str, str] = None, granular: bool = False):
     """Load the given dataset by name. Supported by default are 'shp', 'hh', and 'se'."""
     if name == 'shp':
         data = get_shp(split, silent=silent, cache_dir=cache_dir)
@@ -215,12 +215,9 @@ def get_dataset(name: str, split: str, silent: bool = False, cache_dir: str = No
     elif name == 'se':
         data = get_se(split, silent=silent, cache_dir=cache_dir)
     elif name == 'ours':
-        data = get_ours(split)
+        data = get_ours(split, custom_paths, granular)
     else:
         raise ValueError(f"Unknown dataset '{name}'")
-
-    # assert set(list(data.values())[0].keys()) == {'responses', 'pairs', 'sft_target', 'masked_region'}, \
-    #     f"Unexpected keys in dataset: {list(list(data.values())[0].keys())}"
 
     return data
 
@@ -336,6 +333,9 @@ def tokenize_batch_element(prompt: str, chosen: str, rejected: str, truncation_m
         elif mask[-1] == 0:  # invalidate a sample
             chosen_tokens['binary_mask'] = [0] * len(chosen_tokens['input_ids'])
             rejected_tokens['binary_mask'] = [0] * len(rejected_tokens['input_ids'])
+        elif mask[-1] == -2:
+            chosen_tokens['binary_mask'] = get_binary_mask(rejected, rejected_tokens, mask, tokenizer)
+        # print(sum(chosen_tokens['binary_mask']))
 
     longer_response_length = max(
         len(chosen_tokens['input_ids']), len(rejected_tokens['input_ids']))
@@ -400,7 +400,9 @@ def get_batch_iterator(names: List[str],
                        n_examples: Optional[int] = None,
                        seed: int = 0,
                        silent: bool = False,
-                       cache_dir: Optional[str] = None) -> Iterator[Dict]:
+                       cache_dir: Optional[str] = None,
+                       custom_paths: Optional[str] = None,
+                       granular: Optional[bool] = False) -> Iterator[Dict]:
     """Get an iterator over batches of data. Stops after n_epochs or n_examples, whichever comes first.
 
   Args:
@@ -429,7 +431,7 @@ def get_batch_iterator(names: List[str],
         flat_data = []
         for name in names:
             truncation_mode = 'keep_end' if name == 'hh' else 'keep_start'
-            for prompt, data in get_dataset(name, split, silent=silent, cache_dir=cache_dir).items():
+            for prompt, data in get_dataset(name, split, silent=silent, cache_dir=cache_dir, custom_paths=custom_paths, granular=granular).items():
 
                 flat_data.append(
                     (prompt, data['responses'], data['pairs'], data['sft_target'], truncation_mode, data.get('masked_region', [])))
@@ -455,6 +457,8 @@ def get_batch_iterator(names: List[str],
             if sft_mode:
                 if mask and mask[-1] == 1:
                     mask[-1] = 0
+                elif mask:  # little hack to mark that mask is switched
+                    mask[-1] = -2
 
                 batch_element = tokenize_batch_element(
                     prompt, sft_target, sft_target, truncation_mode, tokenizer, max_length, max_prompt_length, mask)
